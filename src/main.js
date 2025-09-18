@@ -66,12 +66,16 @@ const appState = {
   ],
   // 资源加载进度
   loadProgress: 0,
-  totalResources: 15, // 总资源数量估计
-  loadedResources: 0
+  totalResources: 17, // 总资源数量估计(增加了粒子相关资源)
+  loadedResources: 0,
+  // 粒子系统相关
+  mouseTrailPool: null,  // 老鼠轨迹粒子池
+  markParticlePool: null // 标记点高亮粒子池
 };
 
 // 核心变量
 let renderer, camera, mainScene, mainControls, startScene, prologueScene, prologueCamera;
+let lastHoveredMark = null; // 用于标记点粒子效果
 
 // 初始化应用
 window.addEventListener('load', init);
@@ -524,6 +528,39 @@ function initStartScene() {
   });
   tipElement.innerHTML = `点击老鼠<br>还需 ${3 - appState.clickCount} 次`;
   document.body.appendChild(tipElement);
+
+  // 初始化老鼠轨迹粒子
+  initMouseTrailParticles();
+}
+
+// 初始化老鼠轨迹粒子池（灰色粒子）
+function initMouseTrailParticles() {
+  const particlePool = []; // 粒子池：存储可复用的粒子
+  const maxParticles = 50; // 最大粒子数
+
+  // 1. 预创建粒子（粒子池初始化）
+  const trailMaterial = new THREE.PointsMaterial({
+    color: 0x888888, // 灰色轨迹
+    size: 3,
+    transparent: true,
+    opacity: 0.8
+  });
+
+  for (let i = 0; i < maxParticles; i++) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3));
+    const particle = new THREE.Points(geometry, trailMaterial);
+    particle.visible = false; // 默认隐藏
+    startScene.add(particle);
+    particlePool.push({
+      mesh: particle,
+      opacity: 0.8,
+      life: 0 // 粒子生命周期（毫秒）
+    });
+  }
+  appState.mouseTrailPool = particlePool;
+  console.log('老鼠轨迹粒子初始化完成');
+  updateLoadProgress();
 }
 
 // 老鼠沿预设路径连续移动
@@ -540,6 +577,8 @@ function startMousePathMovement() {
 
   const mouse = appState.mouseModel;
   console.log('老鼠开始移动');
+  
+  let frameCount = 0; // 用于控制粒子生成频率
   
   function animateMovement() {
     if (appState.currentView !== 'start') {
@@ -576,7 +615,58 @@ function startMousePathMovement() {
     const bobSpeed = 2;
     mouse.position.y = appState.movePath[0].y + Math.sin(Date.now() * 0.001 * bobSpeed) * bobHeight;
     
+    // 生成轨迹粒子（每5帧生成一个）
+    frameCount++;
+    if (frameCount % 5 === 0 && appState.mouseTrailPool) {
+      spawnTrailParticle();
+    }
+    
+    // 更新轨迹粒子状态
+    updateTrailParticles();
+    
     appState.mouseAnimationId = requestAnimationFrame(animateMovement);
+  }
+
+  // 生成轨迹粒子
+  function spawnTrailParticle() {
+    if (!appState.mouseModel || appState.currentView !== 'start') return;
+
+    // 从粒子池找一个未使用的粒子
+    const unusedParticle = appState.mouseTrailPool.find(p => !p.mesh.visible);
+    if (!unusedParticle) return;
+
+    // 设置粒子位置为老鼠当前位置
+    const mousePos = appState.mouseModel.position;
+    const positions = unusedParticle.mesh.geometry.attributes.position.array;
+    positions[0] = mousePos.x + (Math.random() - 0.5) * 0.5; // 加一点随机偏移
+    positions[1] = mousePos.y + 0.3; // 略高于老鼠身体
+    positions[2] = mousePos.z + (Math.random() - 0.5) * 0.5;
+    unusedParticle.mesh.geometry.attributes.position.needsUpdate = true;
+
+    // 激活粒子
+    unusedParticle.mesh.visible = true;
+    unusedParticle.opacity = 0.8;
+    unusedParticle.life = 1000; // 粒子存活1秒
+  }
+
+  // 更新轨迹粒子
+  function updateTrailParticles() {
+    if (appState.currentView !== 'start' || !appState.mouseTrailPool) return;
+
+    appState.mouseTrailPool.forEach(particle => {
+      if (!particle.mesh.visible) return;
+
+      // 减少生命周期和透明度
+      particle.life -= 16; // 每帧约16ms（60fps）
+      particle.opacity -= 0.8 / (1000 / 16); // 1秒内从0.8减到0
+      particle.mesh.material.opacity = particle.opacity;
+
+      // 生命周期结束，隐藏粒子
+      if (particle.life <= 0) {
+        particle.mesh.visible = false;
+        particle.mesh.material.opacity = 0.8; // 重置透明度
+      }
+    });
   }
 
   appState.mouseAnimationId = requestAnimationFrame(animateMovement);
@@ -672,7 +762,7 @@ function initMainScene() {
 
   // 模型配置
   const modelsToLoad = [
-    { path: 'resource/diqiu.glb', position: new THREE.Vector3(0, 0, 0), scale: 3 },
+    { path: 'resource/diqiu.glb', position: new THREE.Vector3(0, 0, 0), scale: 3, name: 'earth' },
     { path: 'resource/mark.glb', position: new THREE.Vector3(4,6.5,4.3), scale:0.7 , name:'rls', rotation: { x: THREE.MathUtils.degToRad(80), y: THREE.MathUtils.degToRad(40), z: THREE.MathUtils.degToRad(120) } },
     { path: 'resource/mark.glb', position: new THREE.Vector3(2.5,4, -6.5), scale:0.7 , name:'rb', rotation: { x: THREE.MathUtils.degToRad(110), y: THREE.MathUtils.degToRad(20), z: THREE.MathUtils.degToRad(20) } },
     { path: 'resource/mark.glb', position: new THREE.Vector3(5.5,2,7.8), scale:0.7 , name:'trq', rotation: { x: THREE.MathUtils.degToRad(80), y: THREE.MathUtils.degToRad(10), z: THREE.MathUtils.degToRad(150) } },
@@ -685,7 +775,6 @@ function initMainScene() {
   // 标记点交互变量
   const raycaster = new THREE.Raycaster();
   const mouse = new THREE.Vector2();
-  let lastHoveredMark = null;
   let tooltip = null; // 消息框元素
   
   // 标记点消息数据
@@ -772,9 +861,14 @@ function initMainScene() {
           modelGroup.rotation.y = modelInfo.rotation.y || 0;
           modelGroup.rotation.z = modelInfo.rotation.z || 0;
         }
+        
+        // 为地球模型添加标识
+        if (modelInfo.name === 'earth') {
+          modelGroup.userData.isEarth = true;
+        }
 
         // 为标记点设置明确标识
-        if (modelInfo.name) {
+        if (modelInfo.name && modelInfo.name !== 'earth') {
           modelGroup.userData.isMark = true;
           modelGroup.userData.markName = modelInfo.name;
           
@@ -860,7 +954,6 @@ function initMainScene() {
   // 标记点高亮函数 - 使用脉冲着色器效果
   function highlightMark(markObject) {
     if (markObject.isMesh && markObject.userData.originalMaterial) {
-      // 如果还没有创建着色器材质，初始化一次
       if (!markObject.userData.shaderMaterial) {
         markObject.userData.shaderMaterial = new THREE.ShaderMaterial({
           vertexShader: `
@@ -891,7 +984,6 @@ function initMainScene() {
         });
       }
       
-      // 使用着色器材质
       markObject.material = markObject.userData.shaderMaterial;
     }
   }
@@ -904,10 +996,104 @@ function initMainScene() {
     }
   }
 
+  // 初始化标记点高亮粒子（黄色粒子）
+  function initMarkHighlightParticles() {
+    const particlePool = [];
+    const maxParticles = 100;
+
+    // 1. 预创建粒子池（优化性能）
+    const highlightMaterial = new THREE.PointsMaterial({
+      color: 0xffff00, // 黄色（与标记点高亮色一致）
+      size: 2,
+      transparent: true,
+      opacity: 0.8
+    });
+
+    for (let i = 0; i < maxParticles; i++) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3));
+      const particle = new THREE.Points(geometry, highlightMaterial);
+      particle.visible = false;
+      mainScene.add(particle);
+      particlePool.push({
+        mesh: particle,
+        opacity: 0.8,
+        life: 0,
+        velocityY: 0 // 粒子上升速度
+      });
+    }
+    appState.markParticlePool = particlePool;
+    console.log('标记点高亮粒子初始化完成');
+    updateLoadProgress();
+  }
+
+  // 生成标记点粒子流
+  function spawnMarkParticles(markPosition) {
+    if (!appState.markParticlePool) return;
+    
+    const unusedParticle = appState.markParticlePool.find(p => !p.mesh.visible);
+    if (!unusedParticle) return;
+
+    // 粒子位置：标记点周围随机偏移
+    const positions = unusedParticle.mesh.geometry.attributes.position.array;
+    positions[0] = markPosition.x + (Math.random() - 0.5) * 0.8;
+    positions[1] = markPosition.y + (Math.random() - 0.5) * 0.5;
+    positions[2] = markPosition.z + (Math.random() - 0.5) * 0.8;
+    unusedParticle.mesh.geometry.attributes.position.needsUpdate = true;
+
+    // 激活粒子
+    unusedParticle.mesh.visible = true;
+    unusedParticle.opacity = 0.8;
+    unusedParticle.life = 800;
+    unusedParticle.velocityY = 0.02 + Math.random() * 0.01; // 随机上升速度
+  }
+
+  // 更新标记点粒子
+  function updateMarkParticles() {
+    if (appState.currentView !== 'main' || !appState.markParticlePool) return;
+
+    appState.markParticlePool.forEach(particle => {
+      if (!particle.mesh.visible) return;
+
+      // 减少生命周期和透明度
+      particle.life -= 16;
+      particle.opacity -= 0.8 / (800 / 16);
+      particle.mesh.material.opacity = particle.opacity;
+
+      // 粒子上升
+      const positions = particle.mesh.geometry.attributes.position.array;
+      positions[1] += particle.velocityY;
+      particle.mesh.geometry.attributes.position.needsUpdate = true;
+
+      // 生命周期结束，隐藏粒子
+      if (particle.life <= 0) {
+        particle.mesh.visible = false;
+        particle.mesh.material.opacity = 0.8;
+      }
+    });
+
+    // 若有悬停的标记点，每10帧生成一个粒子
+    if (lastHoveredMark) {
+      // 获取标记点的世界坐标
+      const markPos = new THREE.Vector3();
+      lastHoveredMark.getWorldPosition(markPos);
+      
+      // 控制粒子生成频率
+      let frameCount = 0;
+      frameCount++;
+      if (frameCount % 10 === 0) {
+        spawnMarkParticles(markPos);
+      }
+    }
+  }
+
   // 主场景更新函数
   appState.mainUpdate = () => {
     if (!mainControls || !tooltip) return;
     mainControls.update();
+    
+    // 更新标记点粒子
+    updateMarkParticles();
     
     // 如果有悬停的标记点，更新其着色器时间（让脉冲效果动起来）
     if (lastHoveredMark && lastHoveredMark.userData.shaderMaterial) {
@@ -1008,6 +1194,9 @@ function initMainScene() {
   `;
   document.body.appendChild(instructions);
   appState.mainInstructions = instructions;
+
+  // 初始化标记点高亮粒子
+  initMarkHighlightParticles();
 }
 
 // 初始化背景音乐
@@ -1353,6 +1542,10 @@ function mouseClickJump() {
   const mouse = appState.mouseModel;
   const originalY = mouse.position.y;
   const originalZ = mouse.position.z;
+  
+  // 生成点击反馈粒子（老鼠当前位置）
+  spawnClickExplosion(mouse.position.x, mouse.position.y, mouse.position.z);
+
   const jumpHeight = 2.0;
   const swingAmount = 0.3;
   const duration = 380;
@@ -1382,6 +1575,74 @@ function mouseClickJump() {
 
   animate();
   console.log('触发老鼠跳跃动画');
+}
+
+// 点击反馈粒子（爆炸效果）
+function spawnClickExplosion(x, y, z) {
+  if (appState.currentView !== 'start') return;
+
+  // 1. 粒子几何（30 个粒子，从中心点向外扩散）
+  const particleGeometry = new THREE.BufferGeometry();
+  const particleCount = 30;
+  const positions = new Float32Array(particleCount * 3);
+  const velocities = []; // 存储每个粒子的扩散速度
+
+  for (let i = 0; i < particleCount * 3; i += 3) {
+    // 随机位置：以点击点为中心，半径 0.5 范围内
+    const angle1 = Math.random() * Math.PI * 2; // 水平角度
+    const angle2 = Math.random() * Math.PI * 2; // 垂直角度
+    const radius = Math.random() * 0.5;
+
+    positions[i] = x + Math.sin(angle1) * Math.cos(angle2) * radius;
+    positions[i + 1] = y + Math.sin(angle1) * Math.sin(angle2) * radius;
+    positions[i + 2] = z + Math.cos(angle1) * radius;
+
+    // 随机扩散速度（每个粒子方向不同）
+    velocities.push({
+      x: (Math.random() - 0.5) * 0.03,
+      y: (Math.random() - 0.5) * 0.03 + 0.02, // 向上的速度略大，模拟爆炸上升
+      z: (Math.random() - 0.5) * 0.03
+    });
+  }
+  particleGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+  // 2. 粒子材质（橙色，带透明度）
+  const particleMaterial = new THREE.PointsMaterial({
+    color: 0xff9900, // 橙色（与老鼠颜色呼应）
+    size: 2.5,
+    transparent: true,
+    opacity: 1
+  });
+
+  // 3. 创建粒子系统并添加到场景
+  const explosionParticles = new THREE.Points(particleGeometry, particleMaterial);
+  startScene.add(explosionParticles);
+
+  // 4. 爆炸动画：粒子向外扩散 + 逐渐透明
+  let life = 800; // 粒子存活 0.8 秒
+  function updateExplosion() {
+    if (life <= 0) {
+      startScene.remove(explosionParticles); // 生命周期结束，移除粒子
+      return;
+    }
+
+    life -= 16;
+    const positions = explosionParticles.geometry.attributes.position.array;
+    const opacity = life / 800; // 透明度随生命周期减少
+
+    // 更新每个粒子的位置和透明度
+    for (let i = 0; i < particleCount; i++) {
+      const idx = i * 3;
+      positions[idx] += velocities[i].x;
+      positions[idx + 1] += velocities[i].y;
+      positions[idx + 2] += velocities[i].z;
+    }
+    explosionParticles.geometry.attributes.position.needsUpdate = true;
+    explosionParticles.material.opacity = opacity;
+
+    requestAnimationFrame(updateExplosion);
+  }
+  updateExplosion();
 }
 
 // 场景切换通用函数
